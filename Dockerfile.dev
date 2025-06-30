@@ -1,0 +1,39 @@
+# Development Dockerfile for Bitcoin Sanction Detection Service
+FROM node:20-alpine
+
+# Set working directory
+WORKDIR /app
+
+# Install development dependencies
+RUN apk add --no-cache \
+    python3 \
+    make \
+    g++ \
+    git
+
+# Create non-root user
+RUN addgroup -g 1001 -S nodejs && \
+    adduser -S nodejs -u 1001
+
+# Copy package files
+COPY package*.json ./
+COPY tsconfig.json ./
+
+# Install all dependencies (including dev dependencies)
+RUN npm ci --silent
+
+# Copy source code
+COPY --chown=nodejs:nodejs . .
+
+# Create required directories
+RUN mkdir -p logs audit-logs risk-assessments config data && \
+    chown -R nodejs:nodejs /app
+
+# Switch to non-root user
+USER nodejs
+
+# Expose port and debug port
+EXPOSE 3000 9229
+
+# Development command with hot reload and debugging
+CMD ["npm", "run", "dev"]
