@@ -12,6 +12,7 @@ Complete API reference for the Bitcoin Sanction Detection Microservice. This doc
   - [Health & Monitoring](#-health--monitoring)
   - [Address Screening](#-address-screening)
   - [Transaction Screening](#-transaction-screening)
+  - [Transaction Path Analysis](#-transaction-path-analysis)
   - [Bulk Screening](#-bulk-screening)
   - [Risk Assessment](#-risk-assessment)
 - [Rate Limiting](#-rate-limiting)
@@ -35,6 +36,13 @@ Complete API reference for the Bitcoin Sanction Detection Microservice. This doc
 ### Interactive Documentation
 - **Swagger UI**: `http://localhost:3000/api-docs`
 - **OpenAPI Spec**: `http://localhost:3000/api-docs.json`
+
+### Blockchain Data Integration
+- **Provider**: Mempool.space API (@mempool/mempool.js)
+- **Real-time Data**: Live Bitcoin blockchain information
+- **Transaction Analysis**: Multi-hop transaction path tracing
+- **Rate Limiting**: Automatic handling of external API limits
+- **Caching**: 30-minute cache for performance optimization
 
 ## 🔐 Authentication
 
@@ -209,7 +217,7 @@ POST /api/screening/address
 - Script Hash (P2SH): `3J98t1WpEZ73CNmQviecrnyiWrnqRhWNLy`
 - Bech32 (P2WPKH/P2WSH): `bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4`
 
-**Response (Clean Address)**
+**Response (Clean Address - Basic)**
 ```json
 {
   "success": true,
@@ -221,6 +229,49 @@ POST /api/screening/address
     "timestamp": "2025-06-30T19:12:07.852Z",
     "confidence": 95,
     "processingTimeMs": 3
+  },
+  "timestamp": "2025-06-30T19:12:07.852Z",
+  "correlationId": "screening-correlation-id"
+}
+```
+
+**Response (With Transaction Analysis)**
+```json
+{
+  "success": true,
+  "data": {
+    "address": "1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa",
+    "riskScore": 15,
+    "riskLevel": "LOW",
+    "sanctionMatches": [],
+    "transactionAnalysis": {
+      "targetAddress": "1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa",
+      "maxHops": 5,
+      "totalNodesAnalyzed": 342,
+      "sanctionedNodesFound": 1,
+      "pathNodes": [
+        {
+          "address": "1BvBMSEYstWetqTFn5Au4m4GFg7xJaNVN2",
+          "txid": "f4184fc596403b9d638783cf57adfe4c75c605f6356fbc91338530e9831e9e16",
+          "hop": 1,
+          "value": 5000000000,
+          "timestamp": 1231469665,
+          "riskContribution": 0
+        },
+        {
+          "address": "1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa",
+          "txid": "6fe28c0ab6f1b372c1a6a246ae63f74f931e8365e15a089c68d6190000000000",
+          "hop": 3,
+          "value": 1000000000,
+          "timestamp": 1231469665,
+          "riskContribution": 15
+        }
+      ],
+      "riskPropagation": 15
+    },
+    "timestamp": "2025-06-30T19:12:07.852Z",
+    "confidence": 85,
+    "processingTimeMs": 1247
   },
   "timestamp": "2025-06-30T19:12:07.852Z",
   "correlationId": "screening-correlation-id"
@@ -254,6 +305,26 @@ POST /api/screening/address
 }
 ```
 
+**Transaction Analysis Fields**
+| Field | Type | Description |
+|-------|------|-------------|
+| `targetAddress` | string | The address being analyzed |
+| `maxHops` | integer | Maximum transaction hops analyzed |
+| `totalNodesAnalyzed` | integer | Total addresses/transactions analyzed |
+| `sanctionedNodesFound` | integer | Number of sanctioned entities found in path |
+| `pathNodes` | array | Array of transaction path nodes |
+| `riskPropagation` | integer | Risk score from indirect connections (0-100) |
+
+**Path Node Fields**
+| Field | Type | Description |
+|-------|------|-------------|
+| `address` | string | Address in the transaction path |
+| `txid` | string | Transaction ID connecting to this address |
+| `hop` | integer | Number of hops from target address |
+| `value` | integer | Transaction value in satoshis |
+| `timestamp` | integer | Transaction timestamp (Unix) |
+| `riskContribution` | integer | Risk contribution from this node (0-100) |
+
 **Risk Levels**
 - `LOW` (0-25): Minimal risk
 - `MEDIUM` (26-50): Moderate risk
@@ -261,9 +332,8 @@ POST /api/screening/address
 - `CRITICAL` (76-100): Critical risk
 
 **Match Types**
-- `DIRECT`: Exact address match
-- `INDIRECT`: Related address (future feature)
-- `CLUSTER`: Address clustering analysis (future feature)
+- `DIRECT`: Exact address match with sanctions list
+- `INDIRECT`: Risk identified through transaction path analysis
 
 ### 💳 Transaction Screening
 
@@ -301,7 +371,10 @@ POST /api/screening/transaction
         "address": "1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa",
         "riskScore": 0,
         "riskLevel": "LOW",
-        "sanctionMatches": []
+        "sanctionMatches": [],
+        "confidence": 95,
+        "value": 5000000000,
+        "sequence": 4294967295
       }
     ],
     "outputAddresses": [
@@ -309,16 +382,130 @@ POST /api/screening/transaction
         "address": "1BvBMSEYstWetqTFn5Au4m4GFg7xJaNVN2",
         "riskScore": 15,
         "riskLevel": "LOW",
-        "sanctionMatches": []
+        "sanctionMatches": [],
+        "confidence": 90,
+        "value": 4999900000
       }
     ],
     "overallRiskScore": 8,
-    "timestamp": "2025-06-30T19:12:07.852Z"
+    "riskAssessment": {
+      "maxInputRisk": 0,
+      "maxOutputRisk": 15,
+      "averageRisk": 7.5,
+      "totalValue": 4999900000,
+      "riskWeightedValue": 749985000
+    },
+    "metadata": {
+      "blockHeight": 170,
+      "confirmations": 850234,
+      "blockTime": 1231469665,
+      "fee": 100000,
+      "size": 258,
+      "weight": 1032
+    },
+    "timestamp": "2025-06-30T19:12:07.852Z",
+    "processingTimeMs": 156
   },
   "timestamp": "2025-06-30T19:12:07.852Z",
   "correlationId": "tx-screening-correlation-id"
 }
 ```
+
+**Transaction Screening Fields**
+| Field | Type | Description |
+|-------|------|-------------|
+| `txHash` | string | The transaction hash that was screened |
+| `inputAddresses` | array | Screening results for input addresses |
+| `outputAddresses` | array | Screening results for output addresses |
+| `overallRiskScore` | integer | Aggregated risk score for the transaction (0-100) |
+| `riskAssessment` | object | Detailed risk assessment breakdown |
+| `metadata` | object | Transaction metadata (if requested) |
+
+**Risk Assessment Fields**
+| Field | Type | Description |
+|-------|------|-------------|
+| `maxInputRisk` | integer | Highest risk score among input addresses |
+| `maxOutputRisk` | integer | Highest risk score among output addresses |
+| `averageRisk` | number | Average risk across all addresses |
+| `totalValue` | integer | Total transaction value in satoshis |
+| `riskWeightedValue` | integer | Value weighted by risk scores |
+
+### 🔍 Transaction Path Analysis
+
+The Bitcoin Sanction Detection service provides advanced transaction path analysis that traces connections between addresses through the Bitcoin blockchain. This feature helps identify indirect risks by analyzing multi-hop transaction chains.
+
+#### How Transaction Path Analysis Works
+
+1. **Starting Point**: Analysis begins from a target Bitcoin address
+2. **Multi-Hop Tracing**: Follows transaction paths for up to 10 hops (configurable)
+3. **Risk Propagation**: Calculates how risk propagates through the transaction graph
+4. **Sanctioned Node Detection**: Identifies sanctioned addresses in the transaction path
+5. **Risk Scoring**: Assigns risk contributions based on proximity and transaction values
+
+#### Key Features
+
+- **Real-time Analysis**: Uses Mempool.space API for current blockchain data
+- **Configurable Depth**: Set maximum hops (1-10) based on analysis requirements
+- **Risk Propagation**: Advanced algorithms for calculating indirect risk exposure
+- **Performance Optimized**: Caching and concurrent processing for fast results
+- **Detailed Insights**: Comprehensive path information with timestamps and values
+
+#### Risk Propagation Algorithm
+
+Risk propagation is calculated using a combination of factors:
+- **Hop Distance**: Risk decreases with transaction distance
+- **Transaction Value**: Higher value transactions carry more risk weight
+- **Temporal Factors**: Recent transactions have higher risk impact
+- **Direct Sanctions**: Direct matches contribute maximum risk
+
+**Formula**: `Risk = (DirectRisk × HopDecay × ValueWeight × TimeWeight)`
+
+Where:
+- `DirectRisk`: Base risk from sanctioned addresses (0-100)
+- `HopDecay`: Exponential decay based on hop distance (0.1^hop)
+- `ValueWeight`: Logarithmic scaling based on transaction value
+- `TimeWeight`: Decay factor based on transaction age
+
+#### Analysis Output Fields
+
+**TransactionPathAnalysis Object**
+```json
+{
+  "targetAddress": "1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa",
+  "maxHops": 5,
+  "totalNodesAnalyzed": 342,
+  "sanctionedNodesFound": 1,
+  "pathNodes": [...],
+  "riskPropagation": 15
+}
+```
+
+**PathNode Object**
+```json
+{
+  "address": "1BvBMSEYstWetqTFn5Au4m4GFg7xJaNVN2",
+  "txid": "f4184fc596403b9d638783cf57adfe4c75c605f6356fbc91338530e9831e9e16",
+  "hop": 1,
+  "value": 5000000000,
+  "timestamp": 1231469665,
+  "riskContribution": 0
+}
+```
+
+#### Use Cases
+
+- **Enhanced Due Diligence**: Identify indirect exposure to sanctioned entities
+- **Risk Assessment**: Comprehensive risk scoring including indirect factors  
+- **Compliance Reporting**: Detailed audit trails for regulatory requirements
+- **Transaction Monitoring**: Real-time screening with historical context
+- **Forensic Analysis**: Investigate complex transaction patterns and relationships
+
+#### Performance Considerations
+
+- **Analysis Time**: Typically 100-2000ms depending on hop depth and network conditions
+- **Rate Limiting**: Respects Mempool.space API limits with automatic backoff
+- **Caching**: Results cached for 30 minutes to improve performance
+- **Concurrent Processing**: Multiple addresses analyzed in parallel where possible
 
 ### 📦 Bulk Screening
 
@@ -340,7 +527,8 @@ POST /api/screening/bulk
     "3e3ba6255653315994b6b84adb7d2a0d9cb7b4eef5c4a86d3c8b1d7e6f4a9b2c"
   ],
   "batchId": "batch_001_20250630",
-  "includeTransactionAnalysis": false
+  "includeTransactionAnalysis": false,
+  "maxHops": 5
 }
 ```
 
@@ -350,7 +538,8 @@ POST /api/screening/bulk
 | `addresses` | array | ❌ | Array of Bitcoin addresses (max: 100) |
 | `transactions` | array | ❌ | Array of transaction hashes (max: 50) |
 | `batchId` | string | ❌ | Optional batch identifier for tracking |
-| `includeTransactionAnalysis` | boolean | ❌ | Include transaction analysis (default: false) |
+| `includeTransactionAnalysis` | boolean | ❌ | Include transaction path analysis for addresses (default: false) |
+| `maxHops` | integer | ❌ | Maximum hops for transaction analysis (1-10, default: 5) |
 
 **Limits**
 - Maximum addresses per request: 100
@@ -365,9 +554,12 @@ POST /api/screening/bulk
     "batchId": "batch_001_20250630",
     "summary": {
       "totalProcessed": 3,
+      "addressesProcessed": 2,
+      "transactionsProcessed": 1,
       "highRiskCount": 0,
       "sanctionMatchesCount": 0,
-      "processingTimeMs": 45
+      "processingTimeMs": 245,
+      "transactionAnalysisPerformed": false
     },
     "results": {
       "addresses": [
@@ -375,21 +567,43 @@ POST /api/screening/bulk
           "address": "1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa",
           "riskScore": 0,
           "riskLevel": "LOW",
-          "sanctionMatches": []
+          "sanctionMatches": [],
+          "confidence": 95,
+          "processingTimeMs": 3
         },
         {
           "address": "1BvBMSEYstWetqTFn5Au4m4GFg7xJaNVN2",
           "riskScore": 15,
           "riskLevel": "LOW",
-          "sanctionMatches": []
+          "sanctionMatches": [],
+          "confidence": 90,
+          "processingTimeMs": 4
         }
       ],
       "transactions": [
         {
           "txHash": "3e3ba6255653315994b6b84adb7d2a0d9cb7b4eef5c4a86d3c8b1d7e6f4a9b2c",
           "overallRiskScore": 8,
-          "inputAddresses": [...],
-          "outputAddresses": [...]
+          "riskAssessment": {
+            "maxInputRisk": 0,
+            "maxOutputRisk": 15,
+            "averageRisk": 7.5
+          },
+          "inputAddresses": [
+            {
+              "address": "1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa",
+              "riskScore": 0,
+              "riskLevel": "LOW"
+            }
+          ],
+          "outputAddresses": [
+            {
+              "address": "1BvBMSEYstWetqTFn5Au4m4GFg7xJaNVN2",
+              "riskScore": 15,
+              "riskLevel": "LOW"
+            }
+          ],
+          "processingTimeMs": 238
         }
       ]
     },
@@ -506,6 +720,19 @@ GET /api/risk/stats/summary?days=7
 - **Rate Limit**: 100 requests per 15-minute window
 - **Burst Limit**: 10 requests per second
 - **Bulk Processing**: 100 addresses or 50 transactions per request
+- **Transaction Analysis**: Additional rate limiting applies due to blockchain API usage
+
+### Blockchain API Limits
+- **Mempool.space Integration**: Respects external API rate limits
+- **Automatic Backoff**: Exponential backoff on rate limit hit
+- **Request Batching**: Optimized requests to minimize API calls
+- **Caching**: 30-minute cache for transaction path analysis
+
+### Enhanced Rate Limits for Transaction Analysis
+When `includeTransactionAnalysis=true`:
+- **Address Screening**: 20 requests per 15-minute window
+- **Bulk Screening**: 10 requests per 15-minute window (max 20 addresses)
+- **Processing Time**: 100-2000ms per analysis depending on hop depth
 
 ### Rate Limit Headers
 ```http
@@ -546,16 +773,32 @@ curl -X POST http://localhost:3000/api/screening/address \
   }'
 ```
 
+### Example 2: Address Screening with Transaction Analysis
+
+**Request**
+```bash
+curl -X POST http://localhost:3000/api/screening/address \
+  -H "Content-Type: application/json" \
+  -H "X-Correlation-ID: my-request-124" \
+  -d '{
+    "address": "1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa",
+    "includeTransactionAnalysis": true,
+    "maxHops": 3
+  }'
+```
+
 **JavaScript**
 ```javascript
 const response = await fetch('http://localhost:3000/api/screening/address', {
   method: 'POST',
   headers: {
     'Content-Type': 'application/json',
-    'X-Correlation-ID': 'my-request-123'
+    'X-Correlation-ID': 'my-request-124'
   },
   body: JSON.stringify({
-    address: '1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa'
+    address: '1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa',
+    includeTransactionAnalysis: true,
+    maxHops: 3
   })
 });
 
@@ -565,6 +808,15 @@ if (result.success) {
   console.log('Risk Level:', result.data.riskLevel);
   console.log('Risk Score:', result.data.riskScore);
   console.log('Sanctions Found:', result.data.sanctionMatches.length);
+  
+  if (result.data.transactionAnalysis) {
+    const analysis = result.data.transactionAnalysis;
+    console.log('Transaction Analysis:');
+    console.log('- Total Nodes Analyzed:', analysis.totalNodesAnalyzed);
+    console.log('- Sanctioned Nodes Found:', analysis.sanctionedNodesFound);
+    console.log('- Risk Propagation:', analysis.riskPropagation);
+    console.log('- Path Nodes:', analysis.pathNodes.length);
+  }
 } else {
   console.error('Error:', result.error.message);
 }
@@ -595,7 +847,52 @@ else:
     print(f"Error: {result['error']['message']}")
 ```
 
-### Example 2: Bulk Screening
+### Example 3: Transaction Screening
+
+**Request**
+```bash
+curl -X POST http://localhost:3000/api/screening/transaction \
+  -H "Content-Type: application/json" \
+  -d '{
+    "txHash": "f4184fc596403b9d638783cf57adfe4c75c605f6356fbc91338530e9831e9e16",
+    "direction": "both",
+    "includeMetadata": true
+  }'
+```
+
+**JavaScript**
+```javascript
+const txHash = 'f4184fc596403b9d638783cf57adfe4c75c605f6356fbc91338530e9831e9e16';
+const response = await fetch('http://localhost:3000/api/screening/transaction', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({
+    txHash,
+    direction: 'both',
+    includeMetadata: true
+  })
+});
+
+const result = await response.json();
+
+if (result.success) {
+  const tx = result.data;
+  console.log(`Transaction ${tx.txHash}:`);
+  console.log(`- Overall Risk Score: ${tx.overallRiskScore}`);
+  console.log(`- Input Addresses: ${tx.inputAddresses.length}`);
+  console.log(`- Output Addresses: ${tx.outputAddresses.length}`);
+  console.log(`- Max Input Risk: ${tx.riskAssessment.maxInputRisk}`);
+  console.log(`- Max Output Risk: ${tx.riskAssessment.maxOutputRisk}`);
+  
+  if (tx.metadata) {
+    console.log(`- Block Height: ${tx.metadata.blockHeight}`);
+    console.log(`- Confirmations: ${tx.metadata.confirmations}`);
+    console.log(`- Fee: ${tx.metadata.fee} satoshis`);
+  }
+}
+```
+
+### Example 4: Bulk Screening
 
 **Request**
 ```bash
@@ -640,7 +937,7 @@ if (result.success) {
 }
 ```
 
-### Example 3: Risk Assessment
+### Example 5: Risk Assessment
 
 **Request**
 ```bash
@@ -666,7 +963,7 @@ if (result.success) {
 }
 ```
 
-### Example 4: Error Handling
+### Example 6: Error Handling
 
 **JavaScript with Error Handling**
 ```javascript
@@ -748,14 +1045,48 @@ A complete SDK is available in the [INTEGRATION.md](INTEGRATION.md) file, includ
 ### Test Addresses
 Use these addresses for testing different scenarios:
 
-**Clean Address (Low Risk)**
+**Clean Address (Low Risk) - Bitcoin Genesis Address**
 ```
 1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa
 ```
+*This is Satoshi's genesis address with rich transaction history for testing path analysis.*
 
-**High Risk Address** (if available in test data)
+**Modern Address for Testing**
 ```
-Check your OFAC data for actual sanctioned addresses
+bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4
+```
+*Bech32 format address for testing different address types.*
+
+**Sanctioned Address** (if available in OFAC data)
+```
+Check your current OFAC crypto data for real sanctioned addresses
+```
+
+### Test Transactions
+Use these transaction hashes for transaction screening tests:
+
+**Bitcoin Genesis Transaction**
+```
+4a5e1e4baab89f3a32518a88c31bc87f618f76673e2cc77ab2127b7afdeda33b
+```
+
+**First Bitcoin Transaction**
+```
+f4184fc596403b9d638783cf57adfe4c75c605f6356fbc91338530e9831e9e16
+```
+
+### Testing Transaction Analysis
+For comprehensive testing of transaction path analysis:
+
+```bash
+# Test with transaction analysis enabled
+curl -X POST http://localhost:3000/api/screening/address \
+  -H "Content-Type: application/json" \
+  -d '{
+    "address": "1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa",
+    "includeTransactionAnalysis": true,
+    "maxHops": 2
+  }'
 ```
 
 ### Health Check
