@@ -1,5 +1,6 @@
-import { SanctionMatch, SanctionEntity, MatchType, RiskLevel, ScreeningResult } from '../types';
+import { SanctionMatch, SanctionEntity, MatchType, RiskLevel, ScreeningResult, TransactionPathAnalysis } from '../types';
 import { sanctionsDataService } from './sanctionsDataService';
+import { transactionPathAnalysisService } from './transactionPathAnalysisService';
 // import { riskAssessmentService } from './riskAssessmentService'; // TODO: Create this service
 import { auditLogService } from './auditLogService';
 import { isValidBitcoinAddress } from '../utils/validation';
@@ -42,14 +43,27 @@ export class AddressScreeningService {
       let riskScore = this.calculateDirectMatchRiskScore(sanctionMatches);
       
       // Perform transaction path analysis if requested
-      let transactionAnalysis;
+      let transactionAnalysis: TransactionPathAnalysis | undefined;
       if (includeTransactionAnalysis) {
         try {
-          transactionAnalysis = await this.performTransactionAnalysis(address, maxHops, correlationId);
-          // Add indirect risk from transaction analysis
-          riskScore += transactionAnalysis.riskPropagation * 0.5; // 50% weight for indirect exposure
+          transactionAnalysis = await transactionPathAnalysisService.analyzeTransactionPath(
+            address, 
+            maxHops, 
+            correlationId
+          );
+          // Add indirect risk from transaction analysis (weighted at 60% of direct matches)
+          const indirectRiskScore = (transactionAnalysis.riskPropagation * 0.6);
+          riskScore += indirectRiskScore;
+          
+          logger.debug(`Transaction analysis completed for ${address}`, {
+            totalNodesAnalyzed: transactionAnalysis.totalNodesAnalyzed,
+            sanctionedNodesFound: transactionAnalysis.sanctionedNodesFound,
+            riskPropagation: transactionAnalysis.riskPropagation,
+            indirectRiskScore,
+            correlationId
+          });
         } catch (error) {
-          logger.warn(`Transaction analysis failed for ${address}:`, error);
+          logger.warn(`Transaction analysis failed for ${address}:`, error, { correlationId });
           // Continue without transaction analysis
         }
       }
@@ -70,11 +84,15 @@ export class AddressScreeningService {
         riskScore,
         riskLevel,
         sanctionMatches,
-        transactionAnalysis,
         timestamp: getCurrentTimestamp(),
         confidence,
         processingTimeMs: processingTime
       };
+
+      // Add transaction analysis if it exists
+      if (transactionAnalysis) {
+        result.transactionAnalysis = transactionAnalysis;
+      }
 
       // Log the screening action
       await auditLogService.logAddressScreening(
@@ -264,32 +282,6 @@ export class AddressScreeningService {
   }
 
   /**
-   * Perform transaction path analysis (placeholder for now)
-   */
-  private async performTransactionAnalysis(
-    address: string, 
-    maxHops: number, 
-    correlationId?: string
-  ): Promise<any> {
-    // This will be implemented with the transaction analysis service
-    // For now, return a basic structure
-    logger.debug(`Transaction analysis requested for ${address} (${maxHops} hops)`, {
-      address,
-      maxHops,
-      correlationId
-    });
-    
-    return {
-      targetAddress: address,
-      maxHops,
-      totalNodesAnalyzed: 0,
-      sanctionedNodesFound: 0,
-      pathNodes: [],
-      riskPropagation: 0
-    };
-  }
-
-  /**
    * Determine risk level based on score
    */
   private determineRiskLevel(riskScore: number): RiskLevel {
@@ -304,22 +296,30 @@ export class AddressScreeningService {
    */
   private calculateConfidenceScore(
     sanctionMatches: SanctionMatch[], 
-    transactionAnalysis?: any
+    transactionAnalysis?: TransactionPathAnalysis
   ): number {
     let confidence = 0;
     
     // Confidence from direct matches
     if (sanctionMatches.length > 0) {
       confidence += 70; // High confidence for direct matches
+      
+      // Additional confidence for multiple matches
+      if (sanctionMatches.length > 1) {
+        confidence += 10;
+      }
     } else {
-      confidence += 20; // Base confidence for no matches
+      confidence += 30; // Base confidence for no matches
     }
     
     // Confidence from transaction analysis
     if (transactionAnalysis && transactionAnalysis.totalNodesAnalyzed > 0) {
-      confidence += 20;
-    } else {
-      confidence += 10; // Lower confidence without transaction analysis
+      confidence += 15;
+      
+      // Additional confidence for thorough analysis
+      if (transactionAnalysis.totalNodesAnalyzed > 10) {
+        confidence += 5;
+      }
     }
     
     return Math.min(confidence, 100);

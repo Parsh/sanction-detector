@@ -1,6 +1,7 @@
 import { Router, Request, Response } from 'express';
-import { ApiResponse, ScreeningRequest, TransactionScreeningRequest, BulkScreeningRequest, ValidationError, ScreeningResult } from '../types';
+import { ApiResponse, ScreeningRequest, TransactionScreeningRequest, BulkScreeningRequest, ValidationError, ExternalApiError, ScreeningResult } from '../types';
 import { addressScreeningService } from '../services/addressScreeningService';
+import { transactionScreeningService } from '../services/transactionScreeningService';
 import { isValidBitcoinAddress, isValidBitcoinTxHash } from '../utils/validation';
 import config from '../config';
 import logger from '../utils/logger';
@@ -267,7 +268,7 @@ router.post('/address', async (req: Request, res: Response) => {
  */
 router.post('/transaction', async (req: Request, res: Response) => {
   try {
-    const { txHash, direction = 'both' }: TransactionScreeningRequest = req.body;
+    const { txHash, direction = 'both', includeMetadata = false }: TransactionScreeningRequest & { includeMetadata?: boolean } = req.body;
 
     // Validate input
     if (!txHash) {
@@ -285,23 +286,18 @@ router.post('/transaction', async (req: Request, res: Response) => {
     logger.info(`Transaction screening request received`, {
       txHash,
       direction,
+      includeMetadata,
       correlationId: req.correlationId,
       ip: req.ip
     });
 
-    // TODO: Implement transaction screening service
-    // For now, return a placeholder response
-    const result = {
+    // Perform transaction screening
+    const result = await transactionScreeningService.screenTransaction(
       txHash,
       direction,
-      addresses: [], // Will be populated by transaction service
-      riskScore: 0,
-      riskLevel: 'LOW' as const,
-      sanctionMatches: [],
-      timestamp: new Date().toISOString(),
-      confidence: 50,
-      processingTimeMs: 0
-    };
+      includeMetadata,
+      req.correlationId
+    );
 
     const response: ApiResponse<typeof result> = {
       success: true,
@@ -332,16 +328,30 @@ router.post('/transaction', async (req: Request, res: Response) => {
       return res.status(400).json(response);
     }
 
+    if (error instanceof ExternalApiError) {
+      const response: ApiResponse<never> = {
+        success: false,
+        error: {
+          code: error.code,
+          message: error.message,
+          ...(error.details && { details: error.details })
+        },
+        timestamp: new Date().toISOString(),
+        correlationId: req.correlationId
+      };
+      return res.status(502).json(response);
+    }
+
     const response: ApiResponse<never> = {
       success: false,
       error: {
-        code: 'SCREENING_FAILED',
-        message: 'Transaction screening failed'
+        code: 'INTERNAL_SERVER_ERROR',
+        message: 'Internal server error occurred during transaction screening'
       },
       timestamp: new Date().toISOString(),
       correlationId: req.correlationId
     };
-
+    
     return res.status(500).json(response);
   }
 });
@@ -494,8 +504,15 @@ router.post('/bulk', async (req: Request, res: Response) => {
       );
     }
 
-    // TODO: Screen transactions
-    const transactionResults: any[] = []; // Will be populated when transaction service is implemented
+    // Screen transactions
+    let transactionResults: any[] = [];
+    if (transactions.length > 0) {
+      transactionResults = await transactionScreeningService.screenTransactionsBatch(
+        transactions,
+        'both', // Default direction for bulk screening
+        req.correlationId
+      );
+    }
 
     const result = {
       addresses: addressResults,
